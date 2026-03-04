@@ -4,10 +4,11 @@ from pydantic import BaseModel
 import sys 
 import pathlib
 import os
-from auth.main import signup_user,signin_user
 
-# Path import
+# Path import – must happen before any local package imports
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from auth.main import signup_user, signin_user
 
 # Creating a FastAPI instance
 

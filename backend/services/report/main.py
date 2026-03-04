@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from typing import List
 from pathlib import Path
-from docling.document_converter import DocumentConverter
+from PyPDF2 import PdfReader
 from dotenv import load_dotenv, find_dotenv
 import os 
 
@@ -14,10 +14,17 @@ load_dotenv(find_dotenv(".env"))
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 
+# Cache for skill text and compiled chain so they are built only once per process
+_skill_cache: dict = {}
+_chain_cache: dict = {}
+
+
 # Loading skills
 
 def load_skill(path: str = "SKILL.md") -> str:
-    return Path(path).read_text(encoding="utf-8")
+    if path not in _skill_cache:
+        _skill_cache[path] = Path(path).read_text(encoding="utf-8")
+    return _skill_cache[path]
 
 
 # Structured Output
@@ -54,46 +61,50 @@ class ReportAnalysis(BaseModel):
 
 def extract_document(source: str) -> str:
     """
-    Accepts a local file path or a URL.
-    Returns the document content as clean markdown text.
+    Accepts a local PDF file path.
+    Returns the document content as plain text.
     """
-    converter = DocumentConverter()
-    result = converter.convert(source)
-    return result.document.export_to_markdown()
+    reader = PdfReader(source)
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+    return text.strip()
 
 
 # Chain 
 
+# Module-level LLM instance — created once, reused for every request
+_llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash-lite",
+    api_key=GOOGLE_API_KEY,
+    temperature=0.5,
+)
+
+
 def build_chain(skill_path: str = "SKILL.md"):
-    skill = load_skill(skill_path)
+    """Return a cached chain, building it only on first call per skill file."""
+    if skill_path not in _chain_cache:
+        skill = load_skill(skill_path)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", skill),
-        ("human", "Here is the medical report to analyze:\n\n{report_content}")
-    ])
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", skill),
+            ("human", "Here is the medical report to analyze:\n\n{report_content}")
+        ])
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-LITE", 
-                                 api_key=GOOGLE_API_KEY,
-                                 temperature=0.5
-                                )
-    structured_llm = llm.with_structured_output(ReportAnalysis)
+        structured_llm = _llm.with_structured_output(ReportAnalysis)
+        _chain_cache[skill_path] = prompt | structured_llm
 
-    return prompt | structured_llm
+    return _chain_cache[skill_path]
 
-
-# ── Main Function ─────────────────────────────────────────────────────────────
 
 def analyze_report(source: str, skill_path: str = "SKILL.md") -> ReportAnalysis:
-    """
-    source     — local file path or URL to the report (PDF, DOCX, image, etc.)
-    skill_path — path to the SKILL.md file defining agent personality
-    """
     report_content = extract_document(source)
     chain = build_chain(skill_path)
     return chain.invoke({"report_content": report_content})
 
 
-# ── Run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     result = analyze_report(

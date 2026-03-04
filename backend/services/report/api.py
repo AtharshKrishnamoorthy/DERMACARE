@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import tempfile
 import os
-from main import analyze_medical_report
+from main import analyze_report
 
 # Creating FastAPI instance
 
@@ -52,8 +52,8 @@ async def analyze_report_endpoint(file: UploadFile = File(...)):
             tmp_path = tmp.name
 
      
-        response = analyze_medical_report(tmp_path)
-        return ReportResponse(response=response)
+        response = analyze_report(tmp_path)
+        return ReportResponse(response=response.model_dump())
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
